@@ -231,6 +231,21 @@ class RemoteRootService(private val context: Context) {
         packages
     }.onFailure(onFailure).getOrElse { listOf() }
 
+    suspend fun getPackageInfoAsUser(packageName: String, flags: Int, userId: Int) =
+        runCatching { getService().getPackageInfoAsUser(packageName, flags, userId) }.onFailure(onFailure).getOrNull()
+
+    suspend fun grantRuntimePermission(packageName: String, permName: String, user: UserHandle) =
+        runCatching { getService().grantRuntimePermission(packageName, permName, user) }.onFailure(onFailure)
+
+    suspend fun revokeRuntimePermission(packageName: String, permName: String, user: UserHandle) =
+        runCatching { getService().revokeRuntimePermission(packageName, permName, user) }.onFailure(onFailure)
+
+    suspend fun getPermissionFlags(packageName: String, permName: String, user: UserHandle) =
+        runCatching { getService().getPermissionFlags(packageName, permName, user) }.onFailure(onFailure).getOrElse { 0 }
+
+    suspend fun updatePermissionFlags(packageName: String, permName: String, user: UserHandle, flagMask: Int, flagValues: Int) =
+        runCatching { getService().updatePermissionFlags(packageName, permName, user, flagMask, flagValues) }.onFailure(onFailure)
+
     suspend fun getPackageSourceDir(packageName: String, userId: Int): List<String> =
         runCatching { getService().getPackageSourceDir(packageName, userId) }.onFailure(onFailure).getOrElse { listOf() }
 
@@ -257,6 +272,15 @@ class RemoteRootService(private val context: Context) {
     }.onFailure(onFailure).getOrElse { listOf() }
 
     suspend fun getPackageArchiveInfo(path: String): PackageInfo? = runCatching { getService().getPackageArchiveInfo(path) }.onFailure(onFailure).getOrNull()
+
+    suspend fun getPackageSsaidAsUser(packageName: String, uid: Int, userId: Int): String =
+        runCatching { getService().getPackageSsaidAsUser(packageName, uid, userId) ?: "" }.onFailure(onFailure).getOrElse { "" }
+
+    suspend fun setPackageSsaidAsUser(packageName: String, uid: Int, userId: Int, ssaid: String) =
+        runCatching { getService().setPackageSsaidAsUser(packageName, uid, userId, ssaid) }.onFailure(onFailure)
+
+    suspend fun calculateMD5(src: String): String? =
+        runCatching { getService().calculateMD5(src) }.onFailure(onFailure).getOrNull()
 
     @OptIn(ExperimentalSerializationApi::class)
     suspend inline fun <reified T> writeProtoBuf(data: T, dst: String): ShellResult = runCatching {

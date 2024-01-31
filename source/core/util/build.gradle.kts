@@ -11,6 +11,7 @@ dependencies {
     // Core
     implementation(project(":core:common"))
     implementation(project(":core:datastore"))
+    implementation(project(":core:model"))
 
     // Gson
     implementation(libs.gson)
@@ -20,4 +21,7 @@ dependencies {
 
     // zip4j
     implementation(libs.zip4j)
+
+    // Apache commons codec
+    implementation(libs.apache.commons.codec)
 }

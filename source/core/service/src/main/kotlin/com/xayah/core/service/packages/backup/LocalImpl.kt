@@ -70,6 +70,8 @@ internal class LocalImpl @Inject constructor() : AbstractService() {
         packagesBackupUtil.backupData(p = p, t = t, r = restoreEntity, dataType = DataType.PACKAGE_DATA, dstDir = dstDir)
         packagesBackupUtil.backupData(p = p, t = t, r = restoreEntity, dataType = DataType.PACKAGE_OBB, dstDir = dstDir)
         packagesBackupUtil.backupData(p = p, t = t, r = restoreEntity, dataType = DataType.PACKAGE_MEDIA, dstDir = dstDir)
+        packagesBackupUtil.backupPermissions(p = p)
+        packagesBackupUtil.backupSsaid(p = p)
 
         if (t.isSuccess) {
             // Save config
@@ -77,7 +79,8 @@ internal class LocalImpl @Inject constructor() : AbstractService() {
             restoreEntity = p.copy(
                 id = id,
                 indexInfo = p.indexInfo.copy(opType = OpType.RESTORE),
-                dataStates = restoreEntity?.dataStates?.copy() ?: p.dataStates.copy()
+                dataStates = restoreEntity?.dataStates?.copy() ?: p.dataStates.copy(),
+                extraInfo = p.extraInfo.copy(existed = true, activated = false)
             )
             rootService.writeProtoBuf(data = restoreEntity, dst = PathUtil.getPackageRestoreConfigDst(dstDir = dstDir))
             packageDao.upsert(restoreEntity)

@@ -10,8 +10,8 @@ import com.xayah.core.common.viewmodel.UiIntent
 import com.xayah.core.common.viewmodel.UiState
 import com.xayah.core.data.repository.ContextRepository
 import com.xayah.core.data.repository.MediaRepository
+import com.xayah.core.model.DefaultPreserveId
 import com.xayah.core.model.OpType
-import com.xayah.core.model.database.MediaDetail
 import com.xayah.core.model.database.MediaEntity
 import com.xayah.core.rootservice.service.RemoteRootService
 import com.xayah.core.ui.route.MainRoutes
@@ -23,6 +23,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 import com.xayah.core.service.medium.backup.LocalService as LocalBackupService
+import com.xayah.core.service.medium.restore.LocalService as LocalRestoreService
 
 data class IndexUiState(
     val isRefreshing: Boolean,
@@ -45,6 +46,7 @@ class IndexViewModel @Inject constructor(
     private val mediaRepo: MediaRepository,
     rootService: RemoteRootService,
     private val localBackupService: LocalBackupService,
+    private val localRestoreService: LocalRestoreService,
     private val contextRepository: ContextRepository,
 ) : BaseViewModel<IndexUiState, IndexUiIntent, IndexUiEffect>(
     IndexUiState(
@@ -65,6 +67,7 @@ class IndexViewModel @Inject constructor(
         when (intent) {
             is IndexUiIntent.OnRefresh -> {
                 emitStateSuspend(state.copy(isRefreshing = true))
+                mediaRepo.refreshFromLocalMedia(state.name)
                 mediaRepo.updateMediaDataSize(OpType.BACKUP, 0, state.name)
                 mediaRepo.updateMediaArchivesSize(OpType.RESTORE, state.name)
                 emitStateSuspend(state.copy(isRefreshing = false))
@@ -111,7 +114,42 @@ class IndexViewModel @Inject constructor(
                 }
             }
 
-            is IndexUiIntent.RestoreFromLocal -> {}
+            is IndexUiIntent.RestoreFromLocal -> {
+                launchOnGlobal {
+                    emitEffectSuspend(IndexUiEffect.DismissSnackbar)
+                    emitEffectSuspend(
+                        IndexUiEffect.ShowSnackbar(
+                            message = contextRepository.getString(R.string.task_is_in_progress),
+                            actionLabel = contextRepository.getString(R.string.details),
+                            duration = SnackbarDuration.Indefinite,
+                            onActionPerformed = {
+                                withMainContext {
+                                    intent.navController.navigate(MainRoutes.TaskList.route)
+                                }
+                            }
+                        )
+                    )
+                    mediaRepo.upsert(intent.mediaEntity.copy(extraInfo = intent.mediaEntity.extraInfo.copy(activated = true)))
+                    localRestoreService.preprocessing()
+                    localRestoreService.processing()
+                    localRestoreService.postProcessing()
+                    localRestoreService.destroyService()
+
+                    emitEffectSuspend(IndexUiEffect.DismissSnackbar)
+                    emitEffectSuspend(
+                        IndexUiEffect.ShowSnackbar(
+                            message = contextRepository.getString(R.string.restore_completed),
+                            actionLabel = contextRepository.getString(R.string.details),
+                            duration = SnackbarDuration.Long,
+                            onActionPerformed = {
+                                withMainContext {
+                                    intent.navController.navigate(MainRoutes.TaskList.route)
+                                }
+                            }
+                        )
+                    )
+                }
+            }
 
             is IndexUiIntent.Preserve -> {
                 mediaRepo.preserve(intent.mediaEntity)
@@ -126,6 +164,16 @@ class IndexViewModel @Inject constructor(
     private val _activatedCount: Flow<Long> = mediaRepo.activatedCount.flowOnIO()
     val activatedState: StateFlow<Boolean> = _activatedCount.map { it != 0L }.stateInScope(false)
 
-    private val _itemPair: Flow<MediaDetail?> = mediaRepo.queryFlow(name = uiState.value.name).flowOnIO()
-    val itemPairState: StateFlow<MediaDetail?> = _itemPair.stateInScope(null)
+    private val _backupItem: Flow<MediaEntity?> = mediaRepo.queryFlow(
+        name = uiState.value.name,
+        opType = OpType.BACKUP,
+        preserveId = DefaultPreserveId
+    ).flowOnIO()
+    val backupItemState: StateFlow<MediaEntity?> = _backupItem.stateInScope(null)
+
+    private val _restoreItems: Flow<List<MediaEntity>> = mediaRepo.queryFlow(
+        name = uiState.value.name,
+        opType = OpType.RESTORE,
+    ).map { medium -> medium.sortedBy { it.preserveId } }.flowOnIO()
+    val restoreItemsState: StateFlow<List<MediaEntity>> = _restoreItems.stateInScope(listOf())
 }

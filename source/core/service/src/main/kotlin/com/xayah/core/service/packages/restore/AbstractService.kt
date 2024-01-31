@@ -13,11 +13,12 @@ import com.xayah.core.model.database.PackageEntity
 import com.xayah.core.model.database.TaskEntity
 import com.xayah.core.rootservice.util.withIOContext
 import com.xayah.core.service.R
-import com.xayah.core.service.util.PackagesRestoreUtil2
+import com.xayah.core.service.util.PackagesRestoreUtil
 import com.xayah.core.util.DateUtil
 import com.xayah.core.util.LogUtil
 import com.xayah.core.util.NotificationUtil
 import com.xayah.core.util.PathUtil
+import com.xayah.core.util.command.BaseUtil
 import com.xayah.core.util.command.PreparationUtil
 import com.xayah.core.util.localBackupSaveDir
 import dagger.hilt.android.AndroidEntryPoint
@@ -54,7 +55,7 @@ internal abstract class AbstractService : Service() {
     abstract val pathUtil: PathUtil
     abstract val taskDao: TaskDao
     abstract val packageDao: PackageDao
-    abstract val packagesRestoreUtil: PackagesRestoreUtil2
+    abstract val packagesRestoreUtil: PackagesRestoreUtil
     abstract val taskRepository: TaskRepository
 
     private val notificationBuilder by lazy { NotificationUtil.getProgressNotificationBuilder(context) }
@@ -123,6 +124,10 @@ internal abstract class AbstractService : Service() {
                     index
                 )
                 log { "Current package: $currentPackage" }
+
+                // Kill the package.
+                log { "Trying to kill ${currentPackage.packageName}." }
+                BaseUtil.killPackage(userId = currentPackage.userId, packageName = currentPackage.packageName)
 
                 restorePackage(currentPackage)
             }

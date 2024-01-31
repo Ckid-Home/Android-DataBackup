@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
@@ -37,6 +39,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.xayah.core.data.util.typeIconToken
 import com.xayah.core.data.util.typeNameToken
 import com.xayah.core.model.DataType
+import com.xayah.core.model.OpType
 import com.xayah.core.model.database.PackageEntity
 import com.xayah.core.model.util.formatSize
 import com.xayah.core.ui.component.Card
@@ -59,6 +62,7 @@ import com.xayah.core.ui.token.SizeTokens
 import com.xayah.core.ui.util.fromDrawable
 import com.xayah.core.ui.util.fromString
 import com.xayah.core.ui.util.fromStringId
+import com.xayah.core.ui.util.fromVector
 import com.xayah.feature.main.packages.detail.IndexUiIntent
 import com.xayah.feature.main.packages.detail.IndexViewModel
 
@@ -208,6 +212,43 @@ fun PackageDataChip(modifier: Modifier = Modifier, enabled: Boolean, items: List
     )
 }
 
+@ExperimentalMaterial3Api
+@ExperimentalFoundationApi
+@Composable
+fun PackagePermissionChip(modifier: Modifier = Modifier, enabled: Boolean, item: PackageEntity, onClick: () -> Unit) {
+    val context = LocalContext.current
+    DataChip(
+        modifier = modifier,
+        enabled = enabled,
+        title = StringResourceToken.fromStringId(R.string.permissions),
+        subtitle = StringResourceToken.fromString(countItems(context, item.extraInfo.permissions.size)),
+        leadingIcon = ImageVectorToken.fromVector(Icons.Rounded.Key),
+        trailingIcon = if (item.permissionSelected) ImageVectorToken.fromDrawable(R.drawable.ic_rounded_check_circle) else null,
+        border = if (item.permissionSelected) null else outlinedCardBorder(),
+        color = if (item.permissionSelected) ColorSchemeKeyTokens.OnSecondaryContainer else ColorSchemeKeyTokens.OnSurfaceVariant,
+        containerColor = if (item.permissionSelected) ColorSchemeKeyTokens.SecondaryContainer else ColorSchemeKeyTokens.Transparent,
+        onClick = onClick
+    )
+}
+
+@ExperimentalMaterial3Api
+@ExperimentalFoundationApi
+@Composable
+fun PackageSsaidChip(modifier: Modifier = Modifier, enabled: Boolean, item: PackageEntity, onClick: () -> Unit) {
+    DataChip(
+        modifier = modifier,
+        enabled = enabled,
+        title = StringResourceToken.fromStringId(R.string.ssaid),
+        subtitle = StringResourceToken.fromString(item.extraInfo.ssaid),
+        leadingIcon = ImageVectorToken.fromVector(Icons.Rounded.Code),
+        trailingIcon = if (item.ssaidSelected) ImageVectorToken.fromDrawable(R.drawable.ic_rounded_check_circle) else null,
+        border = if (item.ssaidSelected) null else outlinedCardBorder(),
+        color = if (item.ssaidSelected) ColorSchemeKeyTokens.OnSecondaryContainer else ColorSchemeKeyTokens.OnSurfaceVariant,
+        containerColor = if (item.ssaidSelected) ColorSchemeKeyTokens.SecondaryContainer else ColorSchemeKeyTokens.Transparent,
+        onClick = onClick
+    )
+}
+
 @ExperimentalLayoutApi
 @ExperimentalFoundationApi
 @ExperimentalMaterial3Api
@@ -245,9 +286,14 @@ fun OpItem(
                 content = StringResourceToken.fromString(itemState.indexInfo.preserveId.toString())
             )
             infoContent()
-            if (targetState.not()) {
-                if (chipsState.isNotEmpty()) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(PaddingTokens.Level2)) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(PaddingTokens.Level2),
+                verticalArrangement = Arrangement.spacedBy(PaddingTokens.Level2),
+                maxItemsInEachRow = 2,
+            ) {
+                if (targetState.not()) {
+                    if (chipsState.isNotEmpty()) {
                         val apkItem = chipsState[0]
                         PackageApkChip(
                             modifier = Modifier.weight(1f),
@@ -265,14 +311,7 @@ fun OpItem(
                             viewModel.emitIntent(IndexUiIntent.UpdatePackage(items.dataReversedPackage(itemState)))
                         }
                     }
-                }
-            } else {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(PaddingTokens.Level2),
-                    verticalArrangement = Arrangement.spacedBy(PaddingTokens.Level2),
-                    maxItemsInEachRow = 2,
-                ) {
+                } else {
                     chipsState.forEach { item ->
                         PackageDetailDataChip(
                             modifier = Modifier.weight(1f),
@@ -283,6 +322,25 @@ fun OpItem(
                         }
                     }
                 }
+                if (itemState.indexInfo.opType == OpType.RESTORE) {
+                    PackagePermissionChip(
+                        modifier = Modifier.weight(1f),
+                        enabled = isRefreshing.not(),
+                        item = itemState,
+                    ) {
+                        viewModel.emitIntent(IndexUiIntent.UpdatePackage(itemState.reversePermission()))
+                    }
+                    if (itemState.extraInfo.ssaid.isNotEmpty()) PackageSsaidChip(
+                        modifier = Modifier.weight(1f),
+                        enabled = isRefreshing.not(),
+                        item = itemState,
+                    ) {
+                        viewModel.emitIntent(IndexUiIntent.UpdatePackage(itemState.reverseSsaid()))
+                    }
+                    else Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+            if (targetState) {
                 btnContent?.invoke(this)
             }
             FilledIconTextButton(
