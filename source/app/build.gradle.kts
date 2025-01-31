@@ -3,7 +3,9 @@ import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 plugins {
     alias(libs.plugins.application.common)
     alias(libs.plugins.application.hilt)
+    alias(libs.plugins.application.hilt.work)
     alias(libs.plugins.application.compose)
+    alias(libs.plugins.refine)
 }
 
 android {
@@ -18,6 +20,8 @@ android {
         versionName = libs.versions.versionName.get()
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String[]", "SUPPORTED_LOCALES", generateSupportedLocales())
     }
 
     lint {
@@ -29,18 +33,22 @@ android {
         create("arm64-v8a") {
             dimension = "abi"
             versionCode = 4 + (android.defaultConfig.versionCode ?: 0)
+            ndk.abiFilters.add("arm64-v8a")
         }
         create("armeabi-v7a") {
             dimension = "abi"
             versionCode = 3 + (android.defaultConfig.versionCode ?: 0)
+            ndk.abiFilters.add("armeabi-v7a")
         }
         create("x86_64") {
             dimension = "abi"
             versionCode = 2 + (android.defaultConfig.versionCode ?: 0)
+            ndk.abiFilters.add("x86_64")
         }
         create("x86") {
             dimension = "abi"
             versionCode = 1 + (android.defaultConfig.versionCode ?: 0)
+            ndk.abiFilters.add("x86")
         }
         create("foss") {
             dimension = "feature"
@@ -64,6 +72,36 @@ android {
                 "DataBackup-${versionName}-${productFlavors[0].name}-${productFlavors[1].name}-${buildType.name}.apk"
         }
     }
+
+    dependenciesInfo {
+        // Disables dependency metadata when building APKs.
+        includeInApk = false
+        // Disables dependency metadata when building Android App Bundles.
+        includeInBundle = false
+    }
+}
+
+fun generateSupportedLocales(): String {
+    val foundLocales = StringBuilder()
+    foundLocales.append("new String[]{")
+
+    val languages = mutableListOf<String>()
+    fileTree("src/main/res").visit {
+        if(file.path.endsWith("strings.xml")){
+            var languageCode = file.parent.replace("\\", "/").split('/').last()
+                .replace("values-", "").replace("-r", "-")
+            if (languageCode == "values") {
+                languageCode = "en"
+            }
+            languages.add(languageCode)
+        }
+    }
+    languages.sorted().forEach {
+        foundLocales.append("\"").append(it).append("\"").append(",")
+    }
+
+    foundLocales.append("}")
+    return foundLocales.toString().replace(",}","}")
 }
 
 dependencies {
@@ -79,24 +117,27 @@ dependencies {
     implementation(project(":core:data"))
     implementation(project(":core:datastore"))
     implementation(project(":core:util"))
-    implementation(project(":core:hiddenapi"))
+    implementation(project(":core:work"))
+    compileOnly(project(":core:hiddenapi"))
     implementation(project(":core:rootservice"))
 
     // Feature
     implementation(project(":feature:crash"))
+    implementation(project(":feature:setup"))
     "fossImplementation"(project(":feature:flavor:foss"))
     "premiumImplementation"(project(":feature:flavor:premium"))
     "alphaImplementation"(project(":feature:flavor:alpha"))
     "alphaImplementation"(project(":feature:flavor:foss"))
-    implementation(project(":feature:main:home"))
+    implementation(project(":feature:main:dashboard"))
+    implementation(project(":feature:main:restore"))
     implementation(project(":feature:main:cloud"))
     implementation(project(":feature:main:settings"))
-    implementation(project(":feature:main:packages"))
-    implementation(project(":feature:main:medium"))
+    implementation(project(":feature:main:configurations"))
+    implementation(project(":feature:main:processing"))
+    implementation(project(":feature:main:list"))
+    implementation(project(":feature:main:details"))
+    implementation(project(":feature:main:history"))
     implementation(project(":feature:main:directory"))
-    implementation(project(":feature:main:log"))
-    implementation(project(":feature:main:tree"))
-    implementation(project(":feature:main:task"))
 
     // Splash Screen
     implementation(libs.androidx.core.splashscreen)
@@ -107,4 +148,7 @@ dependencies {
 
     // libsu
     implementation(libs.libsu.core)
+
+    // BountyCastle
+    implementation(libs.bountycastle)
 }

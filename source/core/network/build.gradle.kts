@@ -13,6 +13,7 @@ dependencies {
     implementation(project(":core:util"))
     implementation(project(":core:database"))
     implementation(project(":core:model"))
+    implementation(project(":core:rootservice"))
 
     // OkHttp
     implementation(libs.okhttp)
@@ -26,11 +27,15 @@ dependencies {
 
     // Backends
     implementation(libs.apache.commons.net)
-    implementation(libs.smbj)
+    implementation(libs.smbj) {
+        exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+    }
     implementation(libs.guava.compat)
     implementation(libs.smbj.rpc) {
         exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+        exclude(group = "com.hierynomus", module = "smbj")
     }
+    implementation(libs.sshj)
     implementation(libs.sardine.next)
 
     // PickYou

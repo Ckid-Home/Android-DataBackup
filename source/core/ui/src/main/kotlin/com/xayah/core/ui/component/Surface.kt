@@ -2,15 +2,16 @@ package com.xayah.core.ui.component
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Indication
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.LocalAbsoluteTonalElevation
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.contentColorFor
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.NonRestartableComposable
@@ -28,9 +29,9 @@ import com.xayah.core.ui.material3.surfaceColorAtElevation
 @Composable
 @NonRestartableComposable
 fun Surface(
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     shape: Shape = RectangleShape,
     color: Color = MaterialTheme.colorScheme.surface,
@@ -39,7 +40,8 @@ fun Surface(
     shadowElevation: Dp = 0.dp,
     border: BorderStroke? = null,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
-    content: @Composable () -> Unit,
+    indication: Indication? = ripple(),
+    content: @Composable () -> Unit = {},
 ) {
     val absoluteElevation = LocalAbsoluteTonalElevation.current + tonalElevation
     CompositionLocalProvider(
@@ -60,10 +62,10 @@ fun Surface(
                 )
                 .combinedClickable(
                     interactionSource = interactionSource,
-                    indication = rememberRipple(),
+                    indication = indication,
                     enabled = enabled,
-                    onClick = onClick,
-                    onLongClick = onLongClick
+                    onClick = { onClick?.invoke() },
+                    onLongClick = { onLongClick?.invoke() }
                 ),
             propagateMinConstraints = true
         ) {

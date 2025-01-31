@@ -3,57 +3,78 @@ package com.xayah.core.service.util
 import android.content.Context
 import android.content.pm.PackageManager
 import com.xayah.core.common.util.toLineString
+import com.xayah.core.data.repository.CloudRepository
 import com.xayah.core.data.repository.PackageRepository
 import com.xayah.core.database.dao.TaskDao
-import com.xayah.core.datastore.readCompatibleMode
+import com.xayah.core.datastore.readCompressionLevel
 import com.xayah.core.datastore.readFollowSymlinks
+import com.xayah.core.datastore.readSelectionType
 import com.xayah.core.model.CompressionType
 import com.xayah.core.model.DataType
 import com.xayah.core.model.OperationState
+import com.xayah.core.model.SelectionType
 import com.xayah.core.model.database.PackageEntity
 import com.xayah.core.model.database.TaskDetailPackageEntity
+import com.xayah.core.model.util.getCompressPara
+import com.xayah.core.network.client.CloudClient
 import com.xayah.core.rootservice.service.RemoteRootService
 import com.xayah.core.util.IconRelativeDir
 import com.xayah.core.util.LogUtil
 import com.xayah.core.util.PathUtil
-import com.xayah.core.util.PermissionUtil
 import com.xayah.core.util.SymbolUtil
 import com.xayah.core.util.command.Tar
 import com.xayah.core.util.filesDir
 import com.xayah.core.util.model.ShellResult
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import javax.inject.Inject
+import kotlin.coroutines.coroutineContext
 
 class PackagesBackupUtil @Inject constructor(
     @ApplicationContext val context: Context,
     private val rootService: RemoteRootService,
     private val taskDao: TaskDao,
     private val packageRepository: PackageRepository,
-    private val commonBackupUtil: CommonBackupUtil
+    private val commonBackupUtil: CommonBackupUtil,
+    private val cloudRepository: CloudRepository,
 ) {
     companion object {
-        private val TAG = this::class.java.simpleName
+        private const val TAG = "PackagesBackupUtil"
     }
 
-    internal fun log(onMsg: () -> String): String = run {
+    private fun log(onMsg: () -> String): String = run {
         val msg = onMsg()
         LogUtil.log { TAG to msg }
         msg
     }
 
-    private val usePipe = runBlocking { context.readCompatibleMode().first() }
-    private val packageManager by lazy { context.packageManager }
+    private suspend fun PackageEntity.getDataSelected(dataType: DataType) = when (context.readSelectionType().first()) {
+        SelectionType.DEFAULT -> {
+            when (dataType) {
+                DataType.PACKAGE_APK -> apkSelected
+                DataType.PACKAGE_USER -> userSelected
+                DataType.PACKAGE_USER_DE -> userDeSelected
+                DataType.PACKAGE_DATA -> dataSelected
+                DataType.PACKAGE_OBB -> obbSelected
+                DataType.PACKAGE_MEDIA -> mediaSelected
+                else -> false
+            }
+        }
 
-    private fun PackageEntity.getDataSelected(dataType: DataType) = when (dataType) {
-        DataType.PACKAGE_APK -> apkSelected
-        DataType.PACKAGE_USER -> userSelected
-        DataType.PACKAGE_USER_DE -> userDeSelected
-        DataType.PACKAGE_DATA -> dataSelected
-        DataType.PACKAGE_OBB -> obbSelected
-        DataType.PACKAGE_MEDIA -> mediaSelected
-        else -> false
+        SelectionType.APK -> {
+            dataType == DataType.PACKAGE_APK
+        }
+
+        SelectionType.DATA -> {
+            dataType != DataType.PACKAGE_APK
+        }
+
+        SelectionType.BOTH -> {
+            true
+        }
     }
 
     private fun PackageEntity.getDataBytes(dataType: DataType) = when (dataType) {
@@ -76,11 +97,22 @@ class PackagesBackupUtil @Inject constructor(
         else -> Unit
     }
 
+    private fun PackageEntity.setDisplayBytes(dataType: DataType, sizeBytes: Long) = when (dataType) {
+        DataType.PACKAGE_APK -> displayStats.apkBytes = sizeBytes
+        DataType.PACKAGE_USER -> displayStats.userBytes = sizeBytes
+        DataType.PACKAGE_USER_DE -> displayStats.userDeBytes = sizeBytes
+        DataType.PACKAGE_DATA -> displayStats.dataBytes = sizeBytes
+        DataType.PACKAGE_OBB -> displayStats.obbBytes = sizeBytes
+        DataType.PACKAGE_MEDIA -> displayStats.mediaBytes = sizeBytes
+        else -> Unit
+    }
+
     private suspend fun TaskDetailPackageEntity.updateInfo(
         dataType: DataType,
         state: OperationState? = null,
         bytes: Long? = null,
         log: String? = null,
+        content: String? = null,
     ) = run {
         when (dataType) {
             DataType.PACKAGE_APK -> {
@@ -88,6 +120,7 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
@@ -96,6 +129,7 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
@@ -104,6 +138,7 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
@@ -112,6 +147,7 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
@@ -120,6 +156,7 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
@@ -128,12 +165,25 @@ class PackagesBackupUtil @Inject constructor(
                     if (state != null) it.state = state
                     if (bytes != null) it.bytes = bytes
                     if (log != null) it.log = log
+                    if (content != null) it.content = content
                 }
             }
 
             else -> {}
         }
         taskDao.upsert(this)
+    }
+
+    private fun TaskDetailPackageEntity.getLog(
+        dataType: DataType,
+    ) = when (dataType) {
+        DataType.PACKAGE_APK -> apkInfo.log
+        DataType.PACKAGE_USER -> userInfo.log
+        DataType.PACKAGE_USER_DE -> userDeInfo.log
+        DataType.PACKAGE_DATA -> dataInfo.log
+        DataType.PACKAGE_OBB -> obbInfo.log
+        DataType.PACKAGE_MEDIA -> mediaInfo.log
+        else -> ""
     }
 
     private val tarCt = CompressionType.TAR
@@ -146,13 +196,12 @@ class PackagesBackupUtil @Inject constructor(
         val out = mutableListOf<String>()
 
         Tar.compress(
-            usePipe = usePipe,
             exclusionList = listOf(),
             h = "",
             srcDir = context.filesDir(),
             src = IconRelativeDir,
             dst = dst,
-            extra = tarCt.compressPara
+            extra = tarCt.getCompressPara(context.readCompressionLevel().first())
         ).also { result ->
             isSuccess = result.isSuccess
             out.addAll(result.out)
@@ -165,7 +214,7 @@ class PackagesBackupUtil @Inject constructor(
         ShellResult(code = if (isSuccess) 0 else -1, input = listOf(), out = out)
     }
 
-    suspend fun getPackageSourceDir(packageName: String, userId: Int) = rootService.getPackageSourceDir(packageName, userId).let { list ->
+    private suspend fun getPackageSourceDir(packageName: String, userId: Int) = rootService.getPackageSourceDir(packageName, userId).let { list ->
         if (list.isNotEmpty()) PathUtil.getParentPath(list[0]) else ""
     }
 
@@ -193,7 +242,7 @@ class PackagesBackupUtil @Inject constructor(
                     t.updateInfo(dataType = dataType, state = OperationState.SKIP)
                     out.add(log { "Data has not changed." })
                 } else {
-                    Tar.compressInCur(usePipe = usePipe, cur = srcDir, src = "./*.apk", dst = dst, extra = ct.compressPara)
+                    Tar.compressInCur(cur = srcDir, src = "./*.apk", dst = dst, extra = ct.getCompressPara(context.readCompressionLevel().first()))
                         .also { result ->
                             isSuccess = result.isSuccess
                             out.addAll(result.out)
@@ -201,7 +250,10 @@ class PackagesBackupUtil @Inject constructor(
                     commonBackupUtil.testArchive(src = dst, ct = ct).also { result ->
                         isSuccess = isSuccess and result.isSuccess
                         out.addAll(result.out)
-                        if (result.isSuccess) p.setDataBytes(dataType, sizeBytes)
+                        if (result.isSuccess) {
+                            p.setDataBytes(dataType, sizeBytes)
+                            p.setDisplayBytes(dataType, rootService.calculateSize(dst))
+                        }
                     }
                 }
             } else {
@@ -279,13 +331,12 @@ class PackagesBackupUtil @Inject constructor(
             } else {
                 // Compress and test.
                 Tar.compress(
-                    usePipe = usePipe,
                     exclusionList = exclusionList,
                     h = if (context.readFollowSymlinks().first()) "-h" else "",
                     srcDir = srcDir,
                     src = packageName,
                     dst = dst,
-                    extra = ct.compressPara
+                    extra = ct.getCompressPara(context.readCompressionLevel().first())
                 ).also { result ->
                     isSuccess = result.isSuccess
                     out.addAll(result.out)
@@ -293,7 +344,10 @@ class PackagesBackupUtil @Inject constructor(
                 commonBackupUtil.testArchive(src = dst, ct = ct).also { result ->
                     isSuccess = isSuccess and result.isSuccess
                     out.addAll(result.out)
-                    if (result.isSuccess) p.setDataBytes(dataType, sizeBytes)
+                    if (result.isSuccess) {
+                        p.setDataBytes(dataType, sizeBytes)
+                        p.setDisplayBytes(dataType, rootService.calculateSize(dst))
+                    }
                 }
             }
 
@@ -311,12 +365,12 @@ class PackagesBackupUtil @Inject constructor(
 
         val packageInfo = rootService.getPackageInfoAsUser(packageName, PackageManager.GET_PERMISSIONS, userId)
         packageInfo?.apply {
-            p.extraInfo.permissions = PermissionUtil.getPermission(packageManager, this)
+            p.extraInfo.permissions = rootService.getPermissions(packageInfo = this)
         }
         val permissions = p.extraInfo.permissions
         log { "Permissions size: ${permissions.size}..." }
         permissions.forEach {
-            log { "Permission name: ${it.name}, isGranted: ${it.isGranted}" }
+            log { "Permission name: ${it.name}, isGranted: ${it.isGranted}, op: ${it.op}, mode: ${it.mode}" }
         }
     }
 
@@ -330,5 +384,27 @@ class PackagesBackupUtil @Inject constructor(
         val ssaid = rootService.getPackageSsaidAsUser(packageName = packageName, uid = uid, userId = userId)
         log { "Ssaid: $ssaid" }
         p.extraInfo.ssaid = ssaid
+    }
+
+    suspend fun upload(client: CloudClient, p: PackageEntity, t: TaskDetailPackageEntity, dataType: DataType, srcDir: String, dstDir: String) = run {
+        val ct = p.indexInfo.compressionType
+        val src = packageRepository.getArchiveDst(dstDir = srcDir, dataType = dataType, ct = ct)
+        t.updateInfo(dataType = dataType, state = OperationState.UPLOADING)
+
+        var flag = true
+        var progress = 0f
+        with(CoroutineScope(coroutineContext)) {
+            launch {
+                while (flag) {
+                    t.updateInfo(dataType = dataType, content = "${(progress * 100).toInt()}%")
+                    delay(500)
+                }
+            }
+        }
+
+        cloudRepository.upload(client = client, src = src, dstDir = dstDir, onUploading = { read, total -> progress = read.toFloat() / total }).apply {
+            flag = false
+            t.updateInfo(dataType = dataType, state = if (isSuccess) OperationState.DONE else OperationState.ERROR, log = t.getLog(dataType) + "\n${outString}", content = "100%")
+        }
     }
 }

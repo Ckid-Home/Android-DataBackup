@@ -4,17 +4,21 @@ import android.content.Context
 import com.xayah.core.common.util.toPathString
 import com.xayah.core.model.database.CloudEntity
 import com.xayah.core.network.R
+import com.xayah.core.rootservice.parcelables.PathParcelable
 import com.xayah.core.util.LogUtil
+import com.xayah.core.util.PathUtil
 import com.xayah.core.util.toPathList
 import com.xayah.core.util.withMainContext
+import com.xayah.libpickyou.PickYouLauncher
 import com.xayah.libpickyou.parcelables.DirChildrenParcelable
 import com.xayah.libpickyou.parcelables.FileParcelable
-import com.xayah.libpickyou.ui.PickYouLauncher
 import com.xayah.libpickyou.ui.model.PickerType
+import com.xayah.libsardine.DavResource
 import com.xayah.libsardine.impl.OkHttpSardine
+import okhttp3.OkHttpClient
 import java.io.File
-import java.nio.file.Paths
-import kotlin.io.path.pathString
+import java.util.concurrent.TimeUnit
+
 
 class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
     private var client: OkHttpSardine? = null
@@ -32,7 +36,13 @@ class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
     }
 
     override fun connect() {
-        client = OkHttpSardine().apply {
+        client = OkHttpSardine(
+            OkHttpClient.Builder()
+                .connectTimeout(0, TimeUnit.SECONDS)
+                .readTimeout(0, TimeUnit.SECONDS)
+                .writeTimeout(0, TimeUnit.SECONDS)
+                .build()
+        ).apply {
             setCredentials(entity.user, entity.pass)
             list(entity.host)
         }
@@ -57,16 +67,21 @@ class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
         }
     }
 
-    override fun upload(src: String, dst: String) = withClient { client ->
-        val name = Paths.get(src).fileName
+    override fun renameTo(src: String, dst: String) = withClient { client ->
+        log { "renameTo: from ${getPath(src)} to ${getPath(dst)}" }
+        client.move(getPath(src), getPath(dst), false)
+    }
+
+    override fun upload(src: String, dst: String, onUploading: (read: Long, total: Long) -> Unit) = withClient { client ->
+        val name = PathUtil.getFileName(src)
         val dstPath = "${getPath(dst)}/$name"
         log { "upload: $src to $dstPath" }
         val srcFile = File(src)
         client.put(dstPath, srcFile, null)
     }
 
-    override fun download(src: String, dst: String) = withClient { client ->
-        val name = Paths.get(src).fileName
+    override fun download(src: String, dst: String, onDownloading: (written: Long, total: Long) -> Unit) = withClient { client ->
+        val name = PathUtil.getFileName(src)
         val dstPath = "${dst}/$name"
         log { "download: ${getPath(src)} to $dstPath" }
         val dstOutputStream = File(dstPath).outputStream()
@@ -84,6 +99,34 @@ class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
     override fun removeDirectory(src: String) = withClient { client ->
         log { "removeDirectory: ${getPath(src)}" }
         client.delete(getPath(src))
+    }
+
+    private fun clearEmptyDirectoriesRecursivelyInternal(src: String): Boolean {
+        var isEmpty = true
+        withClient { client ->
+            val resources: List<DavResource> = client.list(src)
+
+            for (res in resources) {
+                if (!res.isDirectory) {
+                    isEmpty = false
+                } else {
+                    if (clearEmptyDirectoriesRecursivelyInternal(res.path).not()) {
+                        isEmpty = false
+                    }
+                }
+            }
+
+            if (isEmpty) {
+                client.delete(src)
+            }
+
+        }
+        return isEmpty
+    }
+
+
+    override fun clearEmptyDirectoriesRecursively(src: String) {
+        clearEmptyDirectoriesRecursivelyInternal(getPath(src))
     }
 
     override fun deleteRecursively(src: String) = removeDirectory(src)
@@ -105,6 +148,33 @@ class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
         directories.sortBy { it.name }
         return DirChildrenParcelable(files = files, directories = directories)
     }
+
+    private fun walkFileTreeRecursively(src: String): List<PathParcelable> {
+        val pathParcelableList = mutableListOf<PathParcelable>()
+        val files = listFiles(src)
+        for (i in files.files) {
+            pathParcelableList.add(PathParcelable("${src}/${i.name}"))
+        }
+        for (i in files.directories) {
+            pathParcelableList.addAll(walkFileTreeRecursively("${src}/${i.name}"))
+        }
+        return pathParcelableList
+    }
+
+    override fun walkFileTree(src: String): List<PathParcelable> {
+        val pathParcelableList = mutableListOf<PathParcelable>()
+        withClient { client ->
+            val srcFile = client.list(getPath(src))[0]
+            if (srcFile.isDirectory) {
+                pathParcelableList.addAll(walkFileTreeRecursively(src))
+            } else {
+                pathParcelableList.add(PathParcelable(src))
+            }
+        }
+        return pathParcelableList
+    }
+
+    override fun exists(src: String): Boolean = runCatching { withClient { client -> client.list(getPath(src)) } }.isSuccess
 
     private fun sizeRecursively(src: String): Long {
         var size = 0L
@@ -142,30 +212,27 @@ class WebDAVClientImpl(private val entity: CloudEntity) : CloudClient {
     private fun handleOriginalPath(path: String): String = run {
         val pathSplit = path.toPathList().toMutableList()
         // Remove “$Cloud:”
-        pathSplit.removeFirst()
+        pathSplit.removeFirstOrNull()
         pathSplit.toPathString()
     }
 
     override suspend fun setRemote(context: Context, onSet: suspend (remote: String, extra: String) -> Unit) {
         connect()
-        PickYouLauncher.apply {
-            val prefix = "${context.getString(R.string.cloud)}:"
-            sTraverseBackend = { listFiles(it.pathString.replaceFirst(prefix, "")) }
-            sMkdirsBackend = { parent, child ->
+        val prefix = "${context.getString(R.string.cloud)}:"
+        val pickYou = PickYouLauncher(
+            checkPermission = false,
+            traverseBackend = { listFiles(it.replaceFirst(prefix, "")) },
+            mkdirsBackend = { parent, child ->
                 runCatching { mkdirRecursively(handleOriginalPath("$parent/$child")) }.isSuccess
-            }
-            sTitle = context.getString(R.string.select_target_directory)
-            sPickerType = PickerType.DIRECTORY
-            sLimitation = 1
-            sRootPathList = listOf(prefix)
-            sDefaultPathList = listOf(prefix)
-
-        }
+            },
+            title = context.getString(R.string.select_target_directory),
+            pickerType = PickerType.DIRECTORY,
+            rootPathList = listOf(prefix),
+            defaultPathList = listOf(prefix),
+        )
         withMainContext {
-            val pathList = PickYouLauncher.awaitPickerOnce(context)
-            pathList.firstOrNull()?.also { pathString ->
-                onSet(handleOriginalPath(pathString), "")
-            }
+            val pathString = pickYou.awaitLaunch(context)
+            onSet(handleOriginalPath(pathString), "")
         }
         disconnect()
     }

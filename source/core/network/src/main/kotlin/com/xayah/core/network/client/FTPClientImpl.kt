@@ -5,26 +5,28 @@ import com.xayah.core.common.util.toPathString
 import com.xayah.core.model.database.CloudEntity
 import com.xayah.core.model.database.FTPExtra
 import com.xayah.core.network.R
+import com.xayah.core.network.io.CountingInputStreamImpl
+import com.xayah.core.network.io.CountingOutputStreamImpl
 import com.xayah.core.network.util.getExtraEntity
+import com.xayah.core.rootservice.parcelables.PathParcelable
 import com.xayah.core.util.GsonUtil
 import com.xayah.core.util.LogUtil
+import com.xayah.core.util.PathUtil
 import com.xayah.core.util.toPathList
 import com.xayah.core.util.withMainContext
+import com.xayah.libpickyou.PickYouLauncher
 import com.xayah.libpickyou.parcelables.DirChildrenParcelable
 import com.xayah.libpickyou.parcelables.FileParcelable
-import com.xayah.libpickyou.ui.PickYouLauncher
 import com.xayah.libpickyou.ui.model.PickerType
 import org.apache.commons.net.ftp.FTP
 import org.apache.commons.net.ftp.FTPClient
+import org.apache.commons.net.ftp.FTPFile
 import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.nio.file.Paths
 import javax.security.auth.login.LoginException
-import kotlin.io.path.Path
-import kotlin.io.path.pathString
 
 class FTPClientImpl(private val entity: CloudEntity, private val extra: FTPExtra) : CloudClient {
     private var client: FTPClient? = null
@@ -78,27 +80,40 @@ class FTPClientImpl(private val entity: CloudEntity, private val extra: FTPExtra
         }
     }
 
-    override fun upload(src: String, dst: String) = withClient { client ->
-        val name = Paths.get(src).fileName
+    override fun renameTo(src: String, dst: String) = withClient { client ->
+        log { "renameTo: from $src to $dst" }
+        if (client.rename(src, dst).not()) throw IOException("Failed to rename file from $src to $dst.")
+    }
+
+    override fun upload(src: String, dst: String, onUploading: (read: Long, total: Long) -> Unit) = withClient { client ->
+        val name = PathUtil.getFileName(src)
         val dstPath = "$dst/$name"
         log { "upload: $src to $dstPath" }
         val srcFile = File(src)
+        val srcFileSize = srcFile.length()
         val srcInputStream = FileInputStream(srcFile)
-        client.storeFile(dstPath, srcInputStream)
+        val countingStream = CountingInputStreamImpl(srcInputStream, srcFileSize) { read, total -> onUploading(read, total) }
+        client.storeFile(dstPath, countingStream)
         srcInputStream.close()
+        countingStream.close()
+        if (countingStream.byteCount == 0L) throw IOException("Failed to write remote file: 0 byte.")
+        onUploading(countingStream.byteCount, countingStream.byteCount)
     }
 
-    override fun download(src: String, dst: String) = withClient { client ->
-        val name = Paths.get(src).fileName
+    override fun download(src: String, dst: String, onDownloading: (written: Long, total: Long) -> Unit) = withClient { client ->
+        val name = PathUtil.getFileName(src)
         val dstPath = "$dst/$name"
         log { "download: $src to $dstPath" }
         val dstFile = File(dstPath)
         val srcInputStream: InputStream = client.retrieveFileStream(src)
         val dstOutPutStream: OutputStream = dstFile.outputStream()
-        srcInputStream.copyTo(dstOutPutStream)
+        val countingStream = CountingOutputStreamImpl(dstOutPutStream, -1) { written, total -> onDownloading(written, total) }
+        srcInputStream.copyTo(countingStream)
+        client.completePendingCommand()
         srcInputStream.close()
         dstOutPutStream.close()
-        client.completePendingCommand()
+        countingStream.close()
+        onDownloading(countingStream.byteCount, countingStream.byteCount)
     }
 
     override fun deleteFile(src: String) = withClient { client ->
@@ -111,45 +126,78 @@ class FTPClientImpl(private val entity: CloudEntity, private val extra: FTPExtra
         if (client.removeDirectory(src).not()) throw IOException("Failed to remove dir: $src.")
     }
 
+    override fun clearEmptyDirectoriesRecursively(src: String) = withClient { client ->
+        val srcFile = listFile(src)
+        if (srcFile.isDirectory) {
+            val emptyDirs = mutableListOf<String>()
+            val paths = mutableListOf(src)
+
+            while (paths.isNotEmpty()) {
+                val dir = paths.removeAt(0)
+                val files = client.listFiles(dir)
+                if (files.isEmpty()) {
+                    emptyDirs.add(dir)
+                } else {
+                    for (file in files) {
+                        val path = "${dir}/${file.name}"
+                        if (file.isDirectory) {
+                            paths.add(path)
+                        }
+                    }
+                }
+            }
+
+            // Remove reversed empty dirs.
+            for (path in emptyDirs.reversed()) removeDirectory(path)
+        }
+    }
+
+    private fun listFile(src: String): FTPFile {
+        var srcFile: FTPFile? = null
+        withClient { client ->
+            srcFile = client.mlistFile(src)
+            if (srcFile == null) {
+                srcFile = client.listFiles(runCatching { PathUtil.getParentPath(src) }.getOrElse { "." })
+                    .firstOrNull { it.name == PathUtil.getFileName(src) }
+            }
+        }
+        if (srcFile != null) {
+            return srcFile!!
+        } else {
+            throw IOException("$src not found.")
+        }
+    }
+
     /**
      * Actually this is not a recursive function,
      * just keep this name to make it easier to understand.
      */
     override fun deleteRecursively(src: String) = withClient { client ->
-        val srcPath = Path(src)
-        var srcFile = client.mlistFile(src)
-        if (srcFile == null) {
-            srcFile = client.listFiles(runCatching { srcPath.parent.pathString }.getOrElse { "." })
-                .firstOrNull { it.name == srcPath.fileName.pathString }
-        }
-        if (srcFile != null) {
-            if (srcFile.isDirectory.not()) {
-                deleteFile(src)
-            } else {
-                val dirs = mutableListOf(src)
-                val paths = mutableListOf(src)
-
-                // Delete files and append all empty dirs.
-                while (paths.isNotEmpty()) {
-                    val dir = paths.first()
-                    val files = client.listFiles(dir)
-                    for (file in files) {
-                        val path = "${dir}/${file.name}"
-                        if (file.isDirectory.not()) {
-                            deleteFile(path)
-                        } else {
-                            paths.add(path)
-                            dirs.add(path)
-                        }
-                    }
-                    paths.removeFirst()
-                }
-
-                // Remove reversed empty dirs.
-                for (path in dirs.reversed()) removeDirectory(path)
-            }
+        val srcFile = listFile(src)
+        if (srcFile.isDirectory.not()) {
+            deleteFile(src)
         } else {
-            throw IOException("$src not found.")
+            val dirs = mutableListOf(src)
+            val paths = mutableListOf(src)
+
+            // Delete files and append all empty dirs.
+            while (paths.isNotEmpty()) {
+                val dir = paths.first()
+                val files = client.listFiles(dir)
+                for (file in files) {
+                    val path = "${dir}/${file.name}"
+                    if (file.isDirectory.not()) {
+                        deleteFile(path)
+                    } else {
+                        paths.add(path)
+                        dirs.add(path)
+                    }
+                }
+                paths.removeFirstOrNull()
+            }
+
+            // Remove reversed empty dirs.
+            for (path in dirs.reversed()) removeDirectory(path)
         }
     }
 
@@ -173,30 +221,39 @@ class FTPClientImpl(private val entity: CloudEntity, private val extra: FTPExtra
         return DirChildrenParcelable(files = files, directories = directories)
     }
 
+    override fun walkFileTree(src: String): List<PathParcelable> {
+        val pathParcelableList = mutableListOf<PathParcelable>()
+        val srcFile = listFile(src)
+        if (srcFile.isDirectory.not()) {
+            pathParcelableList.add(PathParcelable(src))
+        } else {
+            val files = listFiles(src)
+            for (i in files.files) {
+                pathParcelableList.add(PathParcelable("${src}/${i.name}"))
+            }
+            for (i in files.directories) {
+                pathParcelableList.addAll(walkFileTree("${src}/${i.name}"))
+            }
+        }
+        return pathParcelableList
+    }
+
+    override fun exists(src: String): Boolean = runCatching { listFile(src) }.isSuccess
+
     override fun size(src: String): Long {
         var size = 0L
         withClient { client ->
-            val srcPath = Path(src)
-            var srcFile = client.mlistFile(src)
-            if (srcFile == null) {
-                srcFile = client.listFiles(runCatching { srcPath.parent.pathString }.getOrElse { "." })
-                    .firstOrNull { it.name == srcPath.fileName.pathString }
-            }
-            if (srcFile != null) {
-                if (srcFile.isDirectory.not()) {
-                    size += client.getSize(src).toLong()
-                } else {
-                    val files = listFiles(src)
-                    for (i in files.files) {
-                        size += client.getSize("${src}/${i.name}").toLong()
-                    }
-                    for (i in files.directories) {
-                        size("${src}/${i.name}")
-                    }
-                }
-
+            val srcFile = listFile(src)
+            if (srcFile.isDirectory.not()) {
+                size += client.getSize(src)?.toLongOrNull() ?: 0
             } else {
-                throw IOException("$src not found.")
+                val files = listFiles(src)
+                for (i in files.files) {
+                    size += client.getSize("${src}/${i.name}")?.toLongOrNull() ?: 0
+                }
+                for (i in files.directories) {
+                    size("${src}/${i.name}")
+                }
             }
         }
         log { "size: $size, $src" }
@@ -211,31 +268,28 @@ class FTPClientImpl(private val entity: CloudEntity, private val extra: FTPExtra
     private fun handleOriginalPath(path: String): String = run {
         val pathSplit = path.toPathList().toMutableList()
         // Remove “$Cloud:”
-        pathSplit.removeFirst()
+        pathSplit.removeFirstOrNull()
         pathSplit.toPathString()
     }
 
     override suspend fun setRemote(context: Context, onSet: suspend (remote: String, extra: String) -> Unit) {
         val extra = entity.getExtraEntity<FTPExtra>()!!
         connect()
-        PickYouLauncher.apply {
-            val prefix = "${context.getString(R.string.cloud)}:"
-            sTraverseBackend = { listFiles(it.pathString.replaceFirst(prefix, "")) }
-            sMkdirsBackend = { parent, child ->
+        val prefix = "${context.getString(R.string.cloud)}:"
+        val pickYou = PickYouLauncher(
+            checkPermission = false,
+            traverseBackend = { listFiles(it.replaceFirst(prefix, "")) },
+            mkdirsBackend = { parent, child ->
                 runCatching { mkdirRecursively(handleOriginalPath("$parent/$child")) }.isSuccess
-            }
-            sTitle = context.getString(R.string.select_target_directory)
-            sPickerType = PickerType.DIRECTORY
-            sLimitation = 1
-            sRootPathList = listOf(prefix)
-            sDefaultPathList = listOf(prefix)
-
-        }
+            },
+            title = context.getString(R.string.select_target_directory),
+            pickerType = PickerType.DIRECTORY,
+            rootPathList = listOf(prefix),
+            defaultPathList = listOf(prefix),
+        )
         withMainContext {
-            val pathList = PickYouLauncher.awaitPickerOnce(context)
-            pathList.firstOrNull()?.also { pathString ->
-                onSet(handleOriginalPath(pathString), GsonUtil().toJson(extra))
-            }
+            val pathString = pickYou.awaitLaunch(context)
+            onSet(handleOriginalPath(pathString), GsonUtil().toJson(extra))
         }
         disconnect()
     }

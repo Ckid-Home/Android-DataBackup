@@ -36,11 +36,11 @@ import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
@@ -64,6 +64,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.PopupPositionProvider
 import com.xayah.core.ui.material3.tokens.MenuTokens
+import com.xayah.core.ui.theme.fromToken
+import com.xayah.core.ui.theme.themedColorScheme
+import com.xayah.core.ui.theme.value
 import kotlin.math.max
 import kotlin.math.min
 
@@ -133,7 +136,7 @@ internal fun DropdownMenuContent(
             transformOrigin = transformOriginState.value
         },
         shape = shape,
-        color = MaterialTheme.colorScheme.fromToken(MenuTokens.ContainerColor),
+        color = MaterialTheme.themedColorScheme.fromToken(MenuTokens.ContainerColor),
         tonalElevation = MenuTokens.ContainerElevation,
         shadowElevation = MenuTokens.ContainerElevation
     ) {
@@ -165,7 +168,7 @@ internal fun DropdownMenuItemContent(
                 enabled = enabled,
                 onClick = onClick,
                 interactionSource = interactionSource,
-                indication = rememberRipple(true)
+                indication = ripple(true)
             )
             .fillMaxWidth()
             // Preferred min and max width used during the intrinsic measurement.
@@ -241,15 +244,15 @@ object MenuDefaults {
      */
     @Composable
     fun itemColors(
-        textColor: Color = MenuTokens.ListItemLabelTextColor.toColor(),
-        leadingIconColor: Color = MenuTokens.ListItemLeadingIconColor.toColor(),
-        trailingIconColor: Color = MenuTokens.ListItemTrailingIconColor.toColor(),
+        textColor: Color = MenuTokens.ListItemLabelTextColor.value,
+        leadingIconColor: Color = MenuTokens.ListItemLeadingIconColor.value,
+        trailingIconColor: Color = MenuTokens.ListItemTrailingIconColor.value,
         disabledTextColor: Color =
-            MenuTokens.ListItemDisabledLabelTextColor.toColor()
+            MenuTokens.ListItemDisabledLabelTextColor.value
                 .copy(alpha = MenuTokens.ListItemDisabledLabelTextOpacity),
-        disabledLeadingIconColor: Color = MenuTokens.ListItemDisabledLeadingIconColor.toColor()
+        disabledLeadingIconColor: Color = MenuTokens.ListItemDisabledLeadingIconColor.value
             .copy(alpha = MenuTokens.ListItemDisabledLeadingIconOpacity),
-        disabledTrailingIconColor: Color = MenuTokens.ListItemDisabledTrailingIconColor.toColor()
+        disabledTrailingIconColor: Color = MenuTokens.ListItemDisabledTrailingIconColor.value
             .copy(alpha = MenuTokens.ListItemDisabledTrailingIconOpacity),
     ): MenuItemColors = MenuItemColors(
         textColor = textColor,

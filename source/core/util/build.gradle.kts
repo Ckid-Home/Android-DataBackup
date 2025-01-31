@@ -13,6 +13,9 @@ dependencies {
     implementation(project(":core:datastore"))
     implementation(project(":core:model"))
 
+    // Compose Navigation
+    implementation(libs.androidx.navigation.compose)
+
     // Gson
     implementation(libs.gson)
 
@@ -24,4 +27,7 @@ dependencies {
 
     // Apache commons codec
     implementation(libs.apache.commons.codec)
+
+    // Work manager
+    implementation(libs.androidx.work.runtime.ktx)
 }

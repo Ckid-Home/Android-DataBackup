@@ -22,20 +22,54 @@
 
 -dontwarn com.xayah.**
 -dontwarn android.**
+-dontwarn com.android.**
+-dontwarn dalvik.system.**
+-dontwarn libcore.**
 
 # smbj
 -dontwarn javax.el.**
 -dontwarn org.ietf.jgss.**
+-dontwarn org.slf4j.impl.**
 
 # smbj-rpc
 -dontwarn java.rmi.UnmarshalException
+-dontwarn com.google.j2objc.annotations.RetainedWith
+-dontwarn com.google.j2objc.annotations.Weak
 
+# awt
+-dontwarn java.awt.**
+
+# sftp
+-dontwarn sun.security.x509.X509Key
+
+-keepattributes SourceFile,LineNumberTable        # Keep file names and line numbers.
+-keep public class * extends java.lang.Exception  # Optional: Keep custom exceptions.
 -keep class com.xayah.** { *; }
 -keep class android.** { *; }
+-keep class com.android.** { *; }
+-keep class dalvik.system.** { *; }
+-keep class libcore.** { *; }
 
 # smbj
 -keep class javax.el.**
 -keep class org.ietf.jgss.**
+-keep class org.slf4j.impl.**
+
+# SsaidUtil
+-keep class org.xmlpull.**
 
 # smbj-rpc
 -keep class java.rmi.UnmarshalException
+-keep class com.google.j2objc.annotations.RetainedWith
+-keep class com.google.j2objc.annotations.Weak
+
+# awt
+-keep class java.awt.**
+
+# sftp
+-keep class sun.security.x509.X509Key
+
+# BC
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-keep class org.bouncycastle.jce.provider.** { *; }
+-keep class org.bouncycastle.crypto.** { *; }

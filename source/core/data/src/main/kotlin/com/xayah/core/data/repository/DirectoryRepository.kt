@@ -4,17 +4,20 @@ import android.content.Context
 import com.xayah.core.common.util.toSpaceString
 import com.xayah.core.data.R
 import com.xayah.core.database.dao.DirectoryDao
+import com.xayah.core.database.dao.PackageDao
 import com.xayah.core.datastore.ConstantUtil
-import com.xayah.core.datastore.saveBackupSaveParentPath
+import com.xayah.core.datastore.readBackupSavePath
 import com.xayah.core.datastore.saveBackupSavePath
 import com.xayah.core.model.StorageType
 import com.xayah.core.model.database.DirectoryEntity
 import com.xayah.core.model.database.DirectoryUpsertEntity
 import com.xayah.core.rootservice.service.RemoteRootService
 import com.xayah.core.rootservice.util.withIOContext
+import com.xayah.core.util.PathUtil
 import com.xayah.core.util.command.PreparationUtil
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import java.nio.file.Paths
 import javax.inject.Inject
 import kotlin.io.path.name
@@ -23,14 +26,14 @@ import kotlin.io.path.pathString
 class DirectoryRepository @Inject constructor(
     @ApplicationContext private val context: Context,
     private val directoryDao: DirectoryDao,
+    private val packageDao: PackageDao,
     private val rootService: RemoteRootService,
 ) {
-    val directories = directoryDao.queryActiveDirectoriesFlow().distinctUntilChanged()
+    fun queryActiveDirectoriesFlow(storageType: StorageType) = directoryDao.queryActiveDirectoriesFlow(storageType).distinctUntilChanged()
 
     private suspend fun resetDir() = selectDir(
-        parent = ConstantUtil.DefaultPathParent,
-        path = ConstantUtil.DefaultPath,
-        id = 1
+        path = ConstantUtil.DEFAULT_PATH,
+        id = directoryDao.queryDefaultDirectoryId(StorageType.INTERNAL),
     )
 
     suspend fun deleteDir(entity: DirectoryEntity) = run {
@@ -42,14 +45,13 @@ class DirectoryRepository @Inject constructor(
         val customDirList = mutableListOf<DirectoryUpsertEntity>()
         pathList.forEach { pathString ->
             if (pathString.isNotEmpty()) {
-                val path = Paths.get(pathString)
-                val parent = path.parent.pathString
-                val child = path.name
+                val parent = PathUtil.getParentPath(pathString)
+                val child = PathUtil.getFileName(pathString)
 
                 // Custom storage
                 val dir = DirectoryUpsertEntity(
                     id = directoryDao.queryId(parent = parent, child = child),
-                    title = context.getString(R.string.custom_storage),
+                    title = "",
                     parent = parent,
                     child = child,
                     storageType = StorageType.CUSTOM,
@@ -62,13 +64,15 @@ class DirectoryRepository @Inject constructor(
     }
 
     suspend fun selectDir(entity: DirectoryEntity) = run {
-        selectDir(entity.parent, entity.path, entity.id)
+        packageDao.delete(context.readBackupSavePath().first())
+        selectDir(entity.path, entity.id)
     }
 
-    private suspend fun selectDir(parent: String, path: String, id: Long) = run {
-        context.saveBackupSaveParentPath(parent)
-        context.saveBackupSavePath(path)
-        directoryDao.select(id = id)
+    private suspend fun selectDir(path: String, id: Long?) = run {
+        if (id != null) {
+            context.saveBackupSavePath(path)
+            directoryDao.select(id = id)
+        }
     }
 
     suspend fun update() {
@@ -77,15 +81,24 @@ class DirectoryRepository @Inject constructor(
             directoryDao.updateActive(active = false)
 
             // Internal storage
+            val internalList = rootService.listFilePaths(PathUtil.getDataMediaDir(), listFiles = false)
+                .filter { it.substring(it.lastIndexOf("/") + 1).toIntOrNull() != null } // Just select 0 10 999 etc.
             val internalDirs = mutableListOf<DirectoryUpsertEntity>()
-            val internalDirectory = DirectoryUpsertEntity(
-                id = 1,
-                title = context.getString(R.string.internal_storage),
-                parent = ConstantUtil.DefaultPathParent,
-                child = ConstantUtil.DefaultPathChild,
-                storageType = StorageType.INTERNAL,
-            )
-            internalDirs.add(internalDirectory)
+            for (storageItem in internalList) {
+                // e.g. /data/media/0
+                runCatching {
+                    val child = ConstantUtil.DEFAULT_PATH_CHILD
+                    internalDirs.add(
+                        DirectoryUpsertEntity(
+                            id = directoryDao.queryId(parent = storageItem, child = child),
+                            title = "",
+                            parent = storageItem,
+                            child = child,
+                            storageType = StorageType.INTERNAL,
+                        )
+                    )
+                }
+            }
             directoryDao.upsert(internalDirs)
 
             // External storage
@@ -94,11 +107,11 @@ class DirectoryRepository @Inject constructor(
             for (storageItem in externalList) {
                 // e.g. /mnt/media_rw/E7F9-FA61
                 runCatching {
-                    val child = ConstantUtil.DefaultPathChild
+                    val child = ConstantUtil.DEFAULT_PATH_CHILD
                     externalDirs.add(
                         DirectoryUpsertEntity(
                             id = directoryDao.queryId(parent = storageItem, child = child),
-                            title = context.getString(R.string.external_storage),
+                            title = "",
                             parent = storageItem,
                             child = child,
                             storageType = StorageType.EXTERNAL,
@@ -117,6 +130,7 @@ class DirectoryRepository @Inject constructor(
                 val parent = entity.parent
                 entity.error = ""
                 val statFs = rootService.readStatFs(parent)
+                entity.childUsedBytes = rootService.calculateSize(entity.path)
                 entity.availableBytes = statFs.availableBytes
                 entity.totalBytes = statFs.totalBytes
                 if (entity.storageType == StorageType.EXTERNAL) {
@@ -127,7 +141,7 @@ class DirectoryRepository @Inject constructor(
                     val supported = type.lowercase() in ConstantUtil.SupportedExternalStorageFormat
                     if (supported.not()) {
                         tags.add(context.getString(R.string.limited_4gb))
-                        entity.error = "${context.getString(R.string.outdated_fs_warning)}\n" +
+                        entity.error = "${context.getString(R.string.outdated_fs_warning)}\n\n" +
                                 "${context.getString(R.string.recommend)}: ${ConstantUtil.SupportedExternalStorageFormat.toSpaceString()}"
                         entity.enabled = true
                     } else {
@@ -135,6 +149,7 @@ class DirectoryRepository @Inject constructor(
                         entity.enabled = true
                     }
                     entity.tags = tags
+                    entity.type = type
                 }
 
                 directoryDao.upsert(entity)
@@ -147,5 +162,17 @@ class DirectoryRepository @Inject constructor(
         }
     }
 
-    suspend fun countActiveDirectories() = directoryDao.countActiveDirectories()
+    suspend fun updateSelected() {
+        withIOContext {
+            directoryDao.querySelectedByDirectoryType()?.apply {
+                val statFs = rootService.readStatFs(parent)
+                childUsedBytes = rootService.calculateSize(path)
+                availableBytes = statFs.availableBytes
+                totalBytes = statFs.totalBytes
+                directoryDao.upsert(this)
+            }
+        }
+    }
+
+    fun querySelectedByDirectoryTypeFlow() = directoryDao.querySelectedByDirectoryTypeFlow()
 }

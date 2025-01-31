@@ -1,10 +1,11 @@
 package com.xayah.core.model.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.xayah.core.model.CompressionType
-import com.xayah.core.model.DataState
+import com.xayah.core.model.File
 import com.xayah.core.model.OpType
 import kotlinx.serialization.Serializable
 
@@ -14,20 +15,23 @@ data class MediaIndexInfo(
     var name: String,
     var compressionType: CompressionType,
     var preserveId: Long,
+    var cloud: String,
+    var backupDir: String,
 )
 
 @Serializable
 data class MediaInfo(
     var path: String,
-    var dataState: DataState,
     var dataBytes: Long,
     var displayBytes: Long,
 )
 
 @Serializable
 data class MediaExtraInfo(
-    var labels: List<String>,
+    @ColumnInfo(defaultValue = "0") var lastBackupTime: Long,
+    var blocked: Boolean,
     var activated: Boolean,
+    var existed: Boolean,
 )
 
 @Serializable
@@ -50,17 +54,23 @@ data class MediaEntity(
     val preserveId: Long
         get() = indexInfo.preserveId
 
-    val dataSelected: Boolean
-        get() = mediaInfo.dataState == DataState.Selected
+    val displayStatsBytes: Double
+        get() = mediaInfo.displayBytes.toDouble()
 
     val archivesRelativeDir: String
-        get() = "${indexInfo.name}/${ctName}"
+        get() = "${indexInfo.name}${if (preserveId == 0L) "" else "@$preserveId"}"
 
-    val archivesPreserveRelativeDir: String
-        get() = "${archivesRelativeDir}/${indexInfo.preserveId}"
+    val existed: Boolean
+        get() = extraInfo.existed
+
+    val enabled: Boolean
+        get() = extraInfo.existed && path.isNotEmpty()
 }
 
-data class MediaEntityWithCount(
-    @Embedded val entity: MediaEntity,
-    val count: Int
+fun MediaEntity.asExternalModel() = File(
+    id = id,
+    name = name,
+    path = path,
+    preserveId = preserveId,
+    selected = extraInfo.activated
 )

@@ -8,9 +8,10 @@ import android.graphics.drawable.Drawable
 import androidx.core.graphics.drawable.toBitmap
 import androidx.core.graphics.drawable.toDrawable
 import com.topjohnwu.superuser.Shell
-import com.xayah.core.common.util.trim
-import com.xayah.core.util.BinArchiveName
 import com.xayah.core.common.util.BuildConfigUtil
+import com.xayah.core.common.util.trim
+import com.xayah.core.datastore.readCustomSUFile
+import com.xayah.core.util.BinArchiveName
 import com.xayah.core.util.LogUtil
 import com.xayah.core.util.LogUtil.TAG_SHELL_CODE
 import com.xayah.core.util.LogUtil.TAG_SHELL_IN
@@ -25,8 +26,8 @@ import com.xayah.core.util.logDir
 import com.xayah.core.util.model.ShellResult
 import com.xayah.core.util.withIOContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import net.lingala.zip4j.ZipFile
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -37,10 +38,12 @@ private class EnvInitializer : Shell.Initializer() {
     companion object {
         fun initShell(shell: Shell, context: Context) {
             shell.newJob()
-                .add("nsenter -t 1 -m su") // Switch to global namespace
+                .add("nsenter --mount=/proc/1/ns/mnt sh") // Switch to global namespace
                 .add("export PATH=${context.binDir()}:${USD}PATH")
                 .add("export HOME=${context.filesDir()}")
                 .add("set -o pipefail") // Ensure that the exit code of each command is correct.
+                .add("alias awk=${QUOTE}busybox awk$QUOTE")
+                .add("alias ps=${QUOTE}busybox ps$QUOTE")
                 .exec()
         }
     }
@@ -52,20 +55,21 @@ private class EnvInitializer : Shell.Initializer() {
 }
 
 object BaseUtil {
-    private fun getShellBuilder() = Shell.Builder.create()
+    private suspend fun getShellBuilder(context: Context) = Shell.Builder.create()
         .setFlags(Shell.FLAG_MOUNT_MASTER or Shell.FLAG_REDIRECT_STDERR)
         .setInitializers(EnvInitializer::class.java)
+        .setCommands(context.readCustomSUFile().first())
         .setTimeout(3)
 
-    private fun getNewShell() = getShellBuilder().build()
+    private suspend fun getNewShell(context: Context): Shell? = runCatching { getShellBuilder(context).build() }.getOrNull()
 
-    fun initializeEnvironment(context: Context) = run {
+    suspend fun initializeEnvironment(context: Context) = run {
         // Set up shell environment.
         Shell.enableVerboseLogging = BuildConfigUtil.ENABLE_VERBOSE
-        Shell.setDefaultBuilder(getShellBuilder())
+        Shell.setDefaultBuilder(getShellBuilder(context))
 
         // Set up LogUtil.
-        LogUtil.initialize(context.logDir())
+        LogUtil.initialize(context, context.logDir())
     }
 
     suspend fun execute(vararg args: String, shell: Shell? = null, log: Boolean = true): ShellResult = withIOContext {
@@ -118,28 +122,38 @@ object BaseUtil {
         shellResult
     }
 
-    suspend fun kill(vararg keys: String) {
-        // ps -A | grep -w $key1 | grep -w $key2 | ... | awk 'NF>1{print $2}' | xargs kill -9
-        val keysArg = keys.map { "| grep -w $it" }.toTypedArray()
-        execute(
-            "ps -A",
-            *keysArg,
-            "| awk 'NF>1{print ${USD}2}'",
-            "| xargs kill -9",
-            shell = getNewShell(),
-            timeout = -1
-        )
+    suspend fun kill(context: Context, vararg keys: String) {
+        val shell = getNewShell(context)
+        if (shell != null) {
+            // ps -A | grep -w $key1 | grep -w $key2 | ... | awk 'NF>1{print $1}' | xargs kill -9
+            val keysArg = keys.map { "| grep -w $it" }.toTypedArray()
+            execute(
+                "ps -A",
+                *keysArg,
+                "| awk 'NF>1{print ${USD}1}'",
+                "| xargs kill -9",
+                shell = shell,
+                timeout = -1
+            )
+        } else {
+            log { "kill" to "Failed to get a new shell!" }
+        }
     }
 
-    suspend fun killPackage(userId: Int, packageName: String) = runBlocking {
-        val cmd = """
+    suspend fun killPackage(context: Context, userId: Int, packageName: String) {
+        val shell = getNewShell(context)
+        if (shell != null) {
+            val cmd = """
             until [[ $USD(dumpsys activity processes | grep "packageList" | cut -d '{' -f2 | cut -d '}' -f1 | egrep -w "$packageName" | sed -n '1p') = "" ]]; do
                 killall -9 "$packageName" &>/dev/null
                 am force-stop --user "$userId" "$packageName" &>/dev/null
                 am kill "$packageName" &>/dev/null
             done
         """.trimIndent()
-        execute(cmd, shell = getNewShell(), timeout = 3)
+            execute(cmd, shell = shell, timeout = 3)
+        } else {
+            log { "killPackage" to "Failed to get a new shell!" }
+        }
     }
 
     suspend fun mkdirs(dst: String) = withIOContext {
@@ -160,6 +174,8 @@ object BaseUtil {
         }
     }
 
+    fun readIconFromPackageName(context: Context, pkgName: String): Drawable? = runCatching { context.packageManager.getApplicationIcon(pkgName) }.getOrNull()
+
     suspend fun readIcon(context: Context, src: String): Drawable? = withIOContext {
         runCatching {
             val bytes = File(src).readBytes()
@@ -168,7 +184,7 @@ object BaseUtil {
     }
 
     @SuppressLint("SetWorldWritable", "SetWorldReadable")
-    private fun File.setAllPermissions(): Boolean = run {
+    fun File.setAllPermissions(): Boolean = run {
         setExecutable(true, false).also {
             if (it.not()) return@run false
         }
@@ -251,10 +267,10 @@ object BaseUtil {
         ).outString
     }
 
-    suspend fun readSuVersion() = run {
+    suspend fun readSuVersion(su: String) = run {
         // su -v
         execute(
-            "su",
+            su,
             "-v",
             log = false,
         ).outString

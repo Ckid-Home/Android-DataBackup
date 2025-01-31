@@ -1,36 +1,54 @@
 package com.xayah.databackup
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.animation.ExperimentalAnimationApi
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.view.WindowCompat
-import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.xayah.core.ui.component.AnimatedNavHost
 import com.xayah.core.ui.route.MainRoutes
 import com.xayah.core.ui.theme.DataBackupTheme
 import com.xayah.core.ui.util.LocalNavController
 import com.xayah.core.util.command.BaseUtil
-import com.xayah.databackup.index.MainIndexGraph
+import com.xayah.feature.main.cloud.PageCloud
+import com.xayah.feature.main.cloud.add.PageCloudAddAccount
+import com.xayah.feature.main.cloud.add.PageFTPSetup
+import com.xayah.feature.main.cloud.add.PageSFTPSetup
+import com.xayah.feature.main.cloud.add.PageSMBSetup
+import com.xayah.feature.main.cloud.add.PageWebDAVSetup
+import com.xayah.feature.main.configurations.PageConfigurations
+import com.xayah.feature.main.dashboard.PageDashboard
+import com.xayah.feature.main.details.DetailsRoute
 import com.xayah.feature.main.directory.PageDirectory
-import com.xayah.feature.main.log.LogGraph
-import com.xayah.feature.main.medium.detail.PageMediaDetail
-import com.xayah.feature.main.medium.list.PageMedium
-import com.xayah.feature.main.packages.detail.PagePackageDetail
-import com.xayah.feature.main.packages.list.PagePackages
-import com.xayah.feature.main.task.detail.medium.PageTaskMediaDetail
-import com.xayah.feature.main.task.detail.packages.PageTaskPackageDetail
-import com.xayah.feature.main.task.list.PageTaskList
-import com.xayah.feature.main.tree.PageTree
+import com.xayah.feature.main.history.HistoryRoute
+import com.xayah.feature.main.history.TaskDetailsRoute
+import com.xayah.feature.main.list.ListRoute
+import com.xayah.feature.main.processing.medium.backup.MediumBackupProcessingGraph
+import com.xayah.feature.main.processing.medium.restore.MediumRestoreProcessingGraph
+import com.xayah.feature.main.processing.packages.backup.PackagesBackupProcessingGraph
+import com.xayah.feature.main.processing.packages.restore.PackagesRestoreProcessingGraph
+import com.xayah.feature.main.restore.PageRestore
+import com.xayah.feature.main.restore.reload.PageReload
+import com.xayah.feature.main.settings.PageSettings
+import com.xayah.feature.main.settings.about.PageAboutSettings
+import com.xayah.feature.main.settings.about.PageTranslatorsSettings
+import com.xayah.feature.main.settings.backup.PageBackupSettings
+import com.xayah.feature.main.settings.blacklist.PageBlackList
+import com.xayah.feature.main.settings.language.PageLanguageSelector
+import com.xayah.feature.main.settings.restore.PageRestoreSettings
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.runBlocking
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : AppCompatActivity() {
+    @ExperimentalCoroutinesApi
     @ExperimentalAnimationApi
     @ExperimentalFoundationApi
     @ExperimentalLayoutApi
@@ -39,47 +57,97 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
-        runCatching {
-            BaseUtil.initializeEnvironment(context = this)
+        runBlocking {
+            runCatching {
+                BaseUtil.initializeEnvironment(context = this@MainActivity)
+            }
         }
 
         setContent {
             DataBackupTheme {
                 val navController = rememberNavController()
-                CompositionLocalProvider(LocalNavController provides navController) {
-                    NavHost(
+                CompositionLocalProvider(
+                    LocalNavController provides navController,
+                    androidx.lifecycle.compose.LocalLifecycleOwner provides androidx.compose.ui.platform.LocalLifecycleOwner.current,
+                ) {
+                    AnimatedNavHost(
                         navController = navController,
-                        startDestination = MainRoutes.Index.route,
+                        startDestination = MainRoutes.Dashboard.route,
                     ) {
-                        composable(MainRoutes.Index.route) {
-                            MainIndexGraph()
+                        composable(MainRoutes.Dashboard.route) {
+                            PageDashboard()
                         }
-                        composable(MainRoutes.Packages.route) {
-                            PagePackages()
+                        composable(MainRoutes.Cloud.route) {
+                            PageCloud()
                         }
-                        composable(MainRoutes.PackageDetail.route) {
-                            PagePackageDetail()
+                        composable(MainRoutes.CloudAddAccount.route) {
+                            PageCloudAddAccount()
                         }
-                        composable(MainRoutes.Medium.route) {
-                            PageMedium()
+                        composable(MainRoutes.FTPSetup.route) {
+                            PageFTPSetup()
                         }
-                        composable(MainRoutes.MediumDetail.route) {
-                            PageMediaDetail()
+                        composable(MainRoutes.WebDAVSetup.route) {
+                            PageWebDAVSetup()
                         }
-                        composable(MainRoutes.TaskList.route) {
-                            PageTaskList()
+                        composable(MainRoutes.SMBSetup.route) {
+                            PageSMBSetup()
                         }
-                        composable(MainRoutes.TaskPackageDetail.route) {
-                            PageTaskPackageDetail()
+                        composable(MainRoutes.SFTPSetup.route) {
+                            PageSFTPSetup()
                         }
-                        composable(MainRoutes.TaskMediaDetail.route) {
-                            PageTaskMediaDetail()
+                        composable(MainRoutes.List.route) {
+                            ListRoute()
                         }
-                        composable(route = MainRoutes.Log.route) {
-                            LogGraph()
+                        composable(MainRoutes.Details.route) {
+                            DetailsRoute()
                         }
-                        composable(route = MainRoutes.Tree.route) {
-                            PageTree()
+                        composable(MainRoutes.History.route) {
+                            HistoryRoute()
+                        }
+                        composable(MainRoutes.TaskDetails.route) {
+                            TaskDetailsRoute()
+                        }
+                        composable(MainRoutes.PackagesBackupProcessingGraph.route) {
+                            PackagesBackupProcessingGraph()
+                        }
+                        composable(MainRoutes.PackagesRestoreProcessingGraph.route) {
+                            PackagesRestoreProcessingGraph()
+                        }
+                        composable(MainRoutes.MediumBackupProcessingGraph.route) {
+                            MediumBackupProcessingGraph()
+                        }
+                        composable(MainRoutes.MediumRestoreProcessingGraph.route) {
+                            MediumRestoreProcessingGraph()
+                        }
+                        composable(MainRoutes.Settings.route) {
+                            PageSettings()
+                        }
+                        composable(MainRoutes.Restore.route) {
+                            PageRestore()
+                        }
+                        composable(MainRoutes.Reload.route) {
+                            PageReload()
+                        }
+                        composable(MainRoutes.BackupSettings.route) {
+                            PageBackupSettings()
+                        }
+                        composable(MainRoutes.RestoreSettings.route) {
+                            PageRestoreSettings()
+                        }
+                        composable(MainRoutes.LanguageSettings.route) {
+                            PageLanguageSelector()
+                        }
+                        composable(MainRoutes.BlackList.route) {
+                            PageBlackList()
+                        }
+                        composable(MainRoutes.Configurations.route) {
+                            PageConfigurations()
+                        }
+                        composable(MainRoutes.About.route) {
+                            PageAboutSettings()
+                        }
+                        composable(MainRoutes.Translators.route) {
+                            PageTranslatorsSettings()
                         }
                         composable(route = MainRoutes.Directory.route) {
                             PageDirectory()

@@ -16,7 +16,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import com.xayah.core.ui.material3.DisabledAlpha
+import com.xayah.core.ui.theme.withState
 
 @Composable
 fun TopBarTitle(modifier: Modifier = Modifier, text: String) {
@@ -43,7 +43,26 @@ fun HeadlineMediumText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.headlineMedium,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
+        textAlign = textAlign,
+        fontWeight = fontWeight,
+    )
+}
+
+@Composable
+fun HeadlineSmallText(
+    modifier: Modifier = Modifier,
+    text: String,
+    color: Color = Color.Unspecified,
+    textAlign: TextAlign? = null,
+    fontWeight: FontWeight? = null,
+    enabled: Boolean = true,
+) {
+    Text(
+        modifier = modifier,
+        text = text,
+        style = MaterialTheme.typography.headlineSmall,
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -56,15 +75,19 @@ fun TitleLargeText(
     color: Color = Color.Unspecified,
     textAlign: TextAlign? = null,
     fontWeight: FontWeight? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
 ) {
     Text(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.titleLarge,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
+        overflow = overflow,
+        maxLines = maxLines,
     )
 }
 
@@ -81,7 +104,7 @@ fun AutoTitleLargeText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.titleLarge,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -100,7 +123,7 @@ fun TitleMediumText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.titleMedium,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -119,7 +142,7 @@ fun TitleSmallText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.titleSmall,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -132,13 +155,38 @@ fun LabelLargeText(
     color: Color = Color.Unspecified,
     textAlign: TextAlign? = null,
     fontWeight: FontWeight? = null,
+    fontFamily: FontFamily? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
 ) {
     Text(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.labelLarge,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
+        textAlign = textAlign,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        maxLines = maxLines,
+        overflow = overflow,
+    )
+}
+
+@Composable
+fun AutoLabelLargeText(
+    modifier: Modifier = Modifier,
+    text: String,
+    color: Color = Color.Unspecified,
+    textAlign: TextAlign? = null,
+    fontWeight: FontWeight? = null,
+    enabled: Boolean = true,
+) {
+    AutoSizeText(
+        modifier = modifier,
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -152,16 +200,20 @@ fun LabelMediumText(
     textAlign: TextAlign? = null,
     fontWeight: FontWeight? = null,
     textDecoration: TextDecoration? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
 ) {
     Text(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
         textDecoration = textDecoration,
+        overflow = overflow,
+        maxLines = maxLines,
     )
 }
 
@@ -178,7 +230,7 @@ fun AutoLabelMediumText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.labelMedium,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -192,16 +244,39 @@ fun LabelSmallText(
     textAlign: TextAlign? = null,
     fontWeight: FontWeight? = null,
     fontFamily: FontFamily? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
 ) {
     Text(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.labelSmall,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
         fontFamily = fontFamily,
+        maxLines = maxLines,
+        overflow = overflow,
+    )
+}
+
+@Composable
+fun BodyLargeText(
+    modifier: Modifier = Modifier,
+    text: String,
+    color: Color = Color.Unspecified,
+    textAlign: TextAlign? = null,
+    fontWeight: FontWeight? = null,
+    enabled: Boolean = true,
+) {
+    Text(
+        modifier = modifier,
+        text = text,
+        style = MaterialTheme.typography.bodyLarge,
+        color = color.withState(enabled),
+        textAlign = textAlign,
+        fontWeight = fontWeight,
     )
 }
 
@@ -218,7 +293,7 @@ fun BodySmallText(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.bodySmall,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
     )
@@ -231,15 +306,19 @@ fun BodyMediumText(
     color: Color = Color.Unspecified,
     textAlign: TextAlign? = null,
     fontWeight: FontWeight? = null,
+    overflow: TextOverflow = TextOverflow.Ellipsis,
+    maxLines: Int = Int.MAX_VALUE,
     enabled: Boolean = true,
 ) {
     Text(
         modifier = modifier,
         text = text,
         style = MaterialTheme.typography.bodyMedium,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
+        overflow = overflow,
+        maxLines = maxLines,
     )
 }
 
@@ -258,7 +337,7 @@ fun AutoSizeText(
         modifier = modifier,
         text = text,
         style = autoStyle,
-        color = if (enabled) color else color.copy(alpha = DisabledAlpha),
+        color = color.withState(enabled),
         textAlign = textAlign,
         fontWeight = fontWeight,
         maxLines = 1,

@@ -1,6 +1,5 @@
 package com.xayah.core.rootservice.service
 
-import android.app.usage.StorageStats
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -10,20 +9,29 @@ import android.content.pm.UserInfo
 import android.os.IBinder
 import android.os.Parcel
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.os.RemoteException
 import android.os.UserHandle
+import com.google.gson.reflect.TypeToken
 import com.topjohnwu.superuser.ipc.RootService
+import com.xayah.core.datastore.ConstantUtil.DEFAULT_TIMEOUT
+import com.xayah.core.model.database.PackagePermission
 import com.xayah.core.rootservice.IRemoteRootService
 import com.xayah.core.rootservice.impl.RemoteRootServiceImpl
 import com.xayah.core.rootservice.parcelables.PathParcelable
 import com.xayah.core.rootservice.parcelables.StatFsParcelable
+import com.xayah.core.rootservice.parcelables.StorageStatsParcelable
 import com.xayah.core.rootservice.util.ExceptionUtil.tryOnScope
 import com.xayah.core.rootservice.util.withMainContext
+import com.xayah.core.util.GsonUtil
 import com.xayah.core.util.LogUtil
 import com.xayah.core.util.PathUtil
 import com.xayah.core.util.model.ShellResult
+import com.xayah.core.util.withLog
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
@@ -36,13 +44,14 @@ import kotlin.coroutines.suspendCoroutine
 class RemoteRootService(private val context: Context) {
     private var mService: IRemoteRootService? = null
     private var mConnection: ServiceConnection? = null
+    private var mutex = Mutex()
     private var retries = 0
     private val intent by lazy {
         Intent().apply {
             component = ComponentName(context.packageName, RemoteRootService::class.java.name)
-            addCategory(RootService.CATEGORY_DAEMON_MODE)
         }
     }
+    val gsonUtil by lazy { GsonUtil() }
 
     // TODO: Will this cause memory leak? It needs to test.
     var onFailure: (Throwable) -> Unit = {}
@@ -50,6 +59,11 @@ class RemoteRootService(private val context: Context) {
     private fun log(msg: () -> String) = LogUtil.log { "RemoteRootService" to msg() }
 
     class RemoteRootService : RootService() {
+        init {
+            if (Process.myUid() == 0)
+                System.loadLibrary("nativelib")
+        }
+
         override fun onBind(intent: Intent): IBinder = RemoteRootServiceImpl()
     }
 
@@ -114,7 +128,7 @@ class RemoteRootService(private val context: Context) {
         mService = null
     }
 
-    private suspend fun getService(): IRemoteRootService {
+    private suspend fun getService(): IRemoteRootService = mutex.withLock {
         return tryOnScope(
             block = {
                 withMainContext {
@@ -156,15 +170,15 @@ class RemoteRootService(private val context: Context) {
 
     suspend fun renameTo(src: String, dst: String): Boolean = runCatching { getService().renameTo(src, dst) }.onFailure(onFailure).getOrElse { false }
 
-    suspend fun writeText(text: String, path: String, context: Context): Boolean = runCatching {
-        var state = true
+    suspend fun writeText(text: String, dst: String): Boolean = runCatching {
+        var isSuccess = true
         val tmpFilePath = "${context.cacheDir.path}/tmp"
         val tmpFile = File(tmpFilePath)
         tmpFile.writeText(text)
-        if (getService().mkdirs(path).not()) state = false
-        if (getService().copyTo(tmpFilePath, path, true).not()) state = false
+        if (getService().mkdirs(PathUtil.getParentPath(dst)).not()) isSuccess = false
+        if (getService().copyTo(tmpFilePath, dst, true).not()) isSuccess = false
         tmpFile.deleteRecursively()
-        state
+        isSuccess
     }.onFailure(onFailure).getOrElse { false }
 
     suspend fun writeBytes(bytes: ByteArray, dst: String): Boolean = runCatching {
@@ -184,7 +198,8 @@ class RemoteRootService(private val context: Context) {
 
     suspend fun deleteRecursively(path: String): Boolean = runCatching { getService().deleteRecursively(path) }.onFailure(onFailure).getOrElse { false }
 
-    suspend fun listFilePaths(path: String): List<String> = runCatching { getService().listFilePaths(path) }.onFailure(onFailure).getOrElse { listOf() }
+    suspend fun listFilePaths(path: String, listFiles: Boolean = true, listDirs: Boolean = true): List<String> =
+        runCatching { getService().listFilePaths(path, listFiles, listDirs) }.onFailure(onFailure).getOrElse { listOf() }
 
     private fun readFromParcel(pfd: ParcelFileDescriptor, onRead: (Parcel) -> Unit) = run {
         val stream = ParcelFileDescriptor.AutoCloseInputStream(pfd)
@@ -222,6 +237,16 @@ class RemoteRootService(private val context: Context) {
 
     suspend fun clearEmptyDirectoriesRecursively(path: String) = runCatching { getService().clearEmptyDirectoriesRecursively(path) }.onFailure(onFailure)
 
+    suspend fun setAllPermissions(src: String) = runCatching { getService().setAllPermissions(src) }.onFailure(onFailure)
+
+    /**
+     * Get the uid and gid of the file/directory
+     *
+     * @param path
+     * @return Uid to Gid
+     */
+    suspend fun getUidGid(path: String): Pair<UInt, UInt> = runCatching { getService().getUidGid(path).let { it[0].toUInt() to it[1].toUInt() } }.onFailure(onFailure).getOrElse { UInt.MAX_VALUE to UInt.MAX_VALUE }
+
     suspend fun getInstalledPackagesAsUser(flags: Int, userId: Int): List<PackageInfo> = runCatching {
         val pfd = getService().getInstalledPackagesAsUser(flags, userId)
         val packages = mutableListOf<PackageInfo>()
@@ -235,10 +260,10 @@ class RemoteRootService(private val context: Context) {
         runCatching { getService().getPackageInfoAsUser(packageName, flags, userId) }.onFailure(onFailure).getOrNull()
 
     suspend fun grantRuntimePermission(packageName: String, permName: String, user: UserHandle) =
-        runCatching { getService().grantRuntimePermission(packageName, permName, user) }.onFailure(onFailure)
+        runCatching { getService().grantRuntimePermission(packageName, permName, user) }.withLog()
 
     suspend fun revokeRuntimePermission(packageName: String, permName: String, user: UserHandle) =
-        runCatching { getService().revokeRuntimePermission(packageName, permName, user) }.onFailure(onFailure)
+        runCatching { getService().revokeRuntimePermission(packageName, permName, user) }.withLog()
 
     suspend fun getPermissionFlags(packageName: String, permName: String, user: UserHandle) =
         runCatching { getService().getPermissionFlags(packageName, permName, user) }.onFailure(onFailure).getOrElse { 0 }
@@ -257,7 +282,7 @@ class RemoteRootService(private val context: Context) {
 
     suspend fun getUserHandle(userId: Int): UserHandle? = runCatching { getService().getUserHandle(userId) }.onFailure(onFailure).getOrNull()
 
-    suspend fun queryStatsForPackage(packageInfo: PackageInfo, user: UserHandle): StorageStats? =
+    suspend fun queryStatsForPackage(packageInfo: PackageInfo, user: UserHandle): StorageStatsParcelable? =
         runCatching { getService().queryStatsForPackage(packageInfo, user) }.onFailure(onFailure).getOrNull()
 
     suspend fun getUsers(): List<UserInfo> = runCatching { getService().users }.onFailure(onFailure).getOrElse { listOf() }
@@ -279,8 +304,54 @@ class RemoteRootService(private val context: Context) {
     suspend fun setPackageSsaidAsUser(packageName: String, uid: Int, userId: Int, ssaid: String) =
         runCatching { getService().setPackageSsaidAsUser(packageName, uid, userId, ssaid) }.onFailure(onFailure)
 
+    suspend fun setDisplayPowerMode(mode: Int) =
+        runCatching { getService().setDisplayPowerMode(mode) }.onFailure(onFailure)
+
+    suspend fun getScreenOffTimeout() =
+        runCatching { getService().getScreenOffTimeout() }.onFailure(onFailure).getOrElse { DEFAULT_TIMEOUT }
+
+    suspend fun setScreenOffTimeout(timeout: Int) =
+        runCatching { getService().setScreenOffTimeout(timeout) }.onFailure(onFailure)
+
+    suspend fun forceStopPackageAsUser(packageName: String, userId: Int) =
+        runCatching { getService().forceStopPackageAsUser(packageName, userId) }.onFailure(onFailure)
+
+    suspend fun setApplicationEnabledSetting(packageName: String, newState: Int, flags: Int, userId: Int, callingPackage: String?) =
+        runCatching { getService().setApplicationEnabledSetting(packageName, newState, flags, userId, callingPackage) }.onFailure(onFailure)
+
+    suspend fun getApplicationEnabledSetting(packageName: String, userId: Int): Int? =
+        runCatching { getService().getApplicationEnabledSetting(packageName, userId) }.onFailure(onFailure).getOrNull()
+
+    suspend fun getPermissions(packageInfo: PackageInfo): List<PackagePermission> =
+        runCatching { getService().getPermissions(packageInfo) }.onFailure(onFailure).getOrElse { listOf() }
+
+    suspend fun setOpsMode(code: Int, uid: Int, packageName: String?, mode: Int) =
+        runCatching { getService().setOpsMode(code, uid, packageName, mode) }.withLog()
+
     suspend fun calculateMD5(src: String): String? =
         runCatching { getService().calculateMD5(src) }.onFailure(onFailure).getOrNull()
+
+    suspend fun writeJson(data: Any, dst: String): ShellResult = runCatching {
+        var isSuccess: Boolean
+        val out = mutableListOf<String>()
+
+        writeText(text = gsonUtil.toJson(data), dst = dst).also {
+            isSuccess = it
+            if (isSuccess) {
+                out.add("Succeed to write configs: $dst")
+            } else {
+                out.add("Failed to write configs: $dst")
+            }
+        }
+        setAllPermissions(src = dst)
+
+        ShellResult(code = if (isSuccess) 0 else -1, input = listOf(), out = out)
+    }.onFailure(onFailure).getOrElse { ShellResult(code = -1, input = listOf(), out = listOf()) }
+
+    suspend inline fun <reified T> readJson(src: String): T? = runCatching<T?> {
+        val json = readText(path = src)
+        gsonUtil.fromJson<T>(json, object : TypeToken<T>() {}.type)
+    }.onFailure(onFailure).getOrNull()
 
     @OptIn(ExperimentalSerializationApi::class)
     suspend inline fun <reified T> writeProtoBuf(data: T, dst: String): ShellResult = runCatching {
@@ -296,6 +367,7 @@ class RemoteRootService(private val context: Context) {
                 out.add("Failed to write configs: $dst")
             }
         }
+        setAllPermissions(src = dst)
 
         ShellResult(code = if (isSuccess) 0 else -1, input = listOf(), out = out)
     }.onFailure(onFailure).getOrElse { ShellResult(code = -1, input = listOf(), out = listOf()) }
